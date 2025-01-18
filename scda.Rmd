@@ -1,0 +1,295 @@
+---
+title: "scda"
+author: "sara yusuf"
+date: "2024-07-31"
+output: html_document
+---
+
+```{r}
+library(Seurat)
+library(tidyverse)
+```
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+library(scales)
+library(cowplot)
+library(patchwork)
+library(grid)
+library(gridExtra)
+library(harmony)
+library(purrr)
+
+```
+
+```{r}
+metadata =  read.csv('C:/Users/saraa/Desktop/COMP_BIO/scda/data-20240731T131505Z-001/data/metadata.csv')
+```
+
+
+
+
+```{r}
+  obs <- lapply(1:nrow(metadata), function(i) {
+  CreateSeuratObject(
+      Read10X(paste0("C:/Users/saraa/Desktop/COMP_BIO/scda/data-20240731T131505Z-001/data/", metadata$path[i], "/filtered_feature_bc_matrix/")),
+    project = 'pasca',
+    min.cells = 3,
+    min.features = 100
+  )
+})
+```
+
+
+```{r}
+names(obs) <- metadata$sample_id
+
+```
+
+
+
+
+```{r}
+sample_cell_n_all <- unlist(sapply(obs, function(x) ncol(x)))
+```
+
+```{r}
+a1= a@assays$RNA$counts
+view(a1)
+```
+
+```{r}
+a=obs[[1]]
+dim(a@assays$RNA$counts) # raw count matrix
+
+```
+
+
+```{r}
+head(a@meta.data)
+```
+
+
+```{r}
+str(obs[[1]])
+```
+
+
+```{r}
+metadata_col <- colnames(metadata)[-3]
+  
+for (i in 1:length(obs)) {
+  metadata_full <- data.frame(cell = colnames(obs[[i]]))
+  for (col in metadata_col) {
+    temp <- rep(metadata[i,col,drop=T], times = sample_cell_n_all[i])
+    metadata_full <- cbind(metadata_full, temp)
+  }
+  metadata_full <- metadata_full %>% column_to_rownames("cell")
+  colnames(metadata_full) <- metadata_col
+  obs[[i]] <- AddMetaData(obs[[i]], metadata_full)
+}
+```
+
+
+```{r}
+a=obs[[1]]
+
+a@meta.data
+```
+```{r}
+features <- grep(pattern = '^MT-', x = rownames(x = obs[[1]][['RNA']]), value = TRUE)
+percent.featureset <- colSums(x = GetAssayData(object = obs[[1]], assay = 'RNA', layer  = "counts")[features, , drop = FALSE])/
+obs[[1]][[paste0("nCount_", 'RNA')]] * 100
+```
+
+
+
+
+```{r}
+for (i in 1:length(obs)) {
+  obs[[i]]$percent.mt <- PercentageFeatureSet(obs[[i]], pattern = "^MT-")}
+```
+
+```{r}
+
+```
+
+```{r}
+library(tibble)
+library(ggplot2)
+
+for (i in 1:length(obs)) {
+  qc.metrics <- rownames_to_column(as_tibble(obs[[i]][[]]), "Cell.Barcode")
+  
+  p <- qc.metrics %>%
+    arrange(percent.mt) %>%
+    ggplot(aes(nCount_RNA, nFeature_RNA, colour = percent.mt)) + 
+    geom_point() + 
+    scale_color_gradientn(colors = c("black", "blue", "green2", "red", "yellow")) +
+    ggtitle(unique(obs[[i]]$sample_id)) +
+    geom_hline(yintercept = 750) +
+    geom_hline(yintercept = 6000)
+  
+  print(p)
+}
+```
+
+
+
+
+
+
+
+```{r}
+merged_ob <- obs[[1]]
+for (i in 2:length(obs)) {
+  merged_ob <- merge(merged_ob, obs[[i]], add.cell.ids = c(metadata$sample_id[1], metadata$sample_id[i]))
+}
+```
+
+
+```{r}
+options(repr.plot.width=10,repr.plot.height=12)
+VlnPlot(merged_ob, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), 
+        pt.size = 0.1, ncol = 1) +  geom_hline(yintercept = 6000)
+```
+
+
+```{r}
+merged_ob
+merged_ob =subset(merged_ob , subset = (nFeature_RNA <= 6000 & percent.mt <= 25))
+merged_ob
+
+```
+
+
+```{r}
+merged_ob <- NormalizeData(merged_ob, verbose = F)
+```
+
+
+```{r}
+
+x1 <- FetchData(merged_ob, vars = c('CD4','EPCAM','sample_id','condition'), slot = 'counts')
+temp1 <- x1 %>%
+  filter(sample_id == 'AdjNorm_TISSUE_1' & CD4 > 0) %>%
+  ggplot(aes(x = CD4)) + geom_histogram() + theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 300)) +
+  labs(title = 'AdjNorm_TISSUE_1', x = 'Count\n') +
+  theme(axis.title.x = element_blank(), axis.title.y = element_text(size = 15))
+
+temp2 <- x1 %>%
+  filter(sample_id == 'PDAC_TISSUE_1' & CD4 > 0) %>% 
+  ggplot(aes(x = CD4)) + geom_histogram() + theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 100)) + 
+  labs(title = 'PDAC_TISSUE_1') + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+
+p1 <- temp1 + temp2
+p1 <- p1 + plot_annotation(title = 'CD4 Expression (Raw Counts)\n') & theme(plot.title = element_text(hjust = .5))
+
+print(p1)
+
+
+x2 <- FetchData(merged_ob, vars = c('CD4','EPCAM','sample_id','condition'))
+temp1 <- x2%>%
+  filter(sample_id == 'AdjNorm_TISSUE_1' & CD4 > 0) %>%
+  ggplot(aes(x = CD4)) + geom_histogram() +
+  theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 60)) + 
+  labs(title = 'AdjNorm_TISSUE_1', x = 'Count\n') +
+  theme(axis.title.x = element_blank(), axis.title.y = element_text(size = 15))
+
+temp2 <- x2 %>%
+  filter(sample_id == 'PDAC_TISSUE_1' & CD4 > 0) %>%
+  ggplot(aes(x = CD4)) + 
+  geom_histogram() + 
+  theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 25)) + 
+  labs(title = 'PDAC_TISSUE_1') +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+
+p2 <- temp1 + temp2
+p2 <- p2 + plot_annotation(title = 'CD4 Expression (Normalized Counts)\n') & theme(plot.title = element_text(hjust = .5))
+
+print(p2)
+
+```
+
+
+```{r}
+# Identify top 2000 variable features using VST method
+merged_ob <- FindVariableFeatures(
+  object = merged_ob,
+  selection.method = "vst",
+  nfeatures = 2000,
+  verbose = FALSE
+)
+```
+
+
+
+
+```{r}
+# Visualize top variable features
+options(repr.plot.width=20,repr.plot.height=6)
+
+top10_list <- head(VariableFeatures(merged_ob), 10)
+p1 <- VariableFeaturePlot(merged_ob)
+p2 <- LabelPoints(plot = p1, points = top10_list)
+top10_list
+p1 
+p2
+```
+
+
+```{r}
+# Load cell cycle genes
+cc_genes <- cc.genes.updated.2019
+```
+
+
+```{r}
+merged_ob <- ScaleData(merged_ob, vars.to.regress = 'nCount_RNA') 
+```
+
+
+```{r}
+subset(merged_ob,subset=condition=='N')
+
+```
+
+
+```{r}
+subset(merged_ob,subset=condition=='P')
+```
+```{r}
+subset_N <- merged_ob %>% filter(condition == 'N')
+
+```
+
+
+```{r}
+merged_ob <- RunPCA(object = merged_ob, features = VariableFeatures(merged_ob), 
+                nfeatures.print = 5)
+```
+
+
+```{r}
+print(ElbowPlot(object = merged_ob, ndims = 50))
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
